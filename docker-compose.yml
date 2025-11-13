@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  sbv2-onnx-server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./bert:/app/bert
+      - ./models:/app/models
+    command:
+      - "./sbv2_onnx_server"
+      - "--model"
+      - "/app/models/models.onnx"
+      - "--config"
+      - "/app/models/config.json"
+      - "--style-vectors"
+      - "/app/models/style_vectors.npy"
+      - "--bert-root"
+      - "/app/bert/"
+      - "--listen"
+      - "0.0.0.0:8080"
