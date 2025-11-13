@@ -51,14 +51,26 @@ jobs:
             cargo build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
           fi
 
+      - name: Bundle ONNX Runtime libraries
+        run: ./scripts/bundle_ort_libs.sh target/${{ matrix.target }}/release
+
       - name: Archive binary
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
+          set -euo pipefail
+          shopt -s nullglob
+          files=("${{ matrix.binary_name }}")
+          for pattern in libonnxruntime* onnxruntime.dll; do
+            matches=($pattern)
+            if [ ${#matches[@]} -gt 0 ]; then
+              files+=("${matches[@]}")
+            fi
+          done
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+            7z a ../../../${{ matrix.asset_name }}.zip "${files[@]}"
           else
-            tar czvf ../../../${{ matrix.asset_name }}.tar.gz ${{ matrix.binary_name }}
+            tar czvf ../../../${{ matrix.asset_name }}.tar.gz "${files[@]}"
           fi
 
       - name: Upload artifact

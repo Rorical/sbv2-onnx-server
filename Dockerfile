@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y protobuf-compiler
 COPY . .
 
 # Build with specified features. If CARGO_FEATURES is empty, this uses the default.
-RUN cargo build --release --features "$CARGO_FEATURES"
+RUN cargo build --release --features "$CARGO_FEATURES" \
+    && ./scripts/bundle_ort_libs.sh target/release
 
 # --- Final Images ---
 
@@ -20,6 +21,7 @@ FROM debian:bookworm-slim as cpu
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
+COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources
 EXPOSE 8080
 CMD ["./sbv2_onnx_server"]
@@ -30,6 +32,7 @@ FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 as cuda
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
+COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources
 EXPOSE 8080
 CMD ["./sbv2_onnx_server"]
@@ -41,6 +44,7 @@ WORKDIR /app
 # This base image is Ubuntu 22.04 based
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
+COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources
 EXPOSE 8080
 CMD ["./sbv2_onnx_server"]
