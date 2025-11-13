@@ -11,6 +11,42 @@ This project provides a Rust-based server for models trained with or converted b
 -   **OpenAI-Compatible API**: Implements an API that mirrors OpenAI's audio generation endpoints for seamless integration with existing clients and tools.
 -   **Dedicated Chinese NLP Pipeline**: Includes a sophisticated pre-processing pipeline tailored for Chinese text.
 
+## Hardware Acceleration
+
+This server supports GPU acceleration via the ONNX Runtime's execution providers. It will automatically detect and use the following providers in order of preference:
+
+1.  **CUDA** (for NVIDIA GPUs)
+2.  **CoreML** (for Apple Silicon)
+3.  **ROCm** (for AMD GPUs)
+
+If no compatible GPU is found, the server will fall back to using the CPU. To use GPU acceleration, you must have the appropriate drivers and toolkits installed on your system (e.g., the CUDA Toolkit for NVIDIA GPUs).
+
+## Docker Builds for Hardware Acceleration
+
+This project includes a multi-stage `Dockerfile` that can build runtime images for different hardware targets. We provide `docker-compose` files for convenience.
+
+### CPU (Default)
+
+The standard `docker-compose.yml` builds and runs the CPU-only version of the server. This is the easiest way to get started and does not require any special hardware.
+
+```bash
+docker-compose up --build
+```
+
+### NVIDIA GPU (CUDA)
+
+If you have an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed, you can build and run the CUDA-enabled image using the `docker-compose.cuda.yml` file.
+
+```bash
+docker-compose -f docker-compose.cuda.yml up --build
+```
+
+This will build the image with CUDA support and automatically make the GPU available to the container.
+
+### AMD GPU (ROCm)
+
+A build stage for ROCm is included in the `Dockerfile`. To build and run it, you can create a `docker-compose.rocm.yml` file and configure it to pass the ROCm device to the container (e.g., `/dev/kfd`, `/dev/dri`).
+
 ## Getting Started
 
 To run the server, you must provide paths to a `Style-Bert-VITS2` model (in ONNX format) and its associated configuration files.

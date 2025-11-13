@@ -1,32 +1,46 @@
-# Dockerfile for sbv2-onnx-server
-
-# Stage 1: Build the application in a container with the Rust toolchain
+# Stage 1: Common builder
 FROM rust:1-bookworm as builder
+
+# Build argument to control features, e.g., "cuda" or "rocm"
+ARG CARGO_FEATURES=""
 
 WORKDIR /usr/src/app
 
-# Install build dependencies.
-# protobuf-compiler is needed for some crates.
 RUN apt-get update && apt-get install -y protobuf-compiler
-
-# Copy the source code
 COPY . .
 
-# Build the application in release mode
-# This will create a statically linked binary if possible.
-RUN cargo build --release
+# Build with specified features. If CARGO_FEATURES is empty, this uses the default.
+RUN cargo build --release --features "$CARGO_FEATURES"
 
-# Stage 2: Create the final, minimal image
-FROM debian:bookworm-slim
+# --- Final Images ---
+
+# Stage 2: CPU-only final image
+FROM debian:bookworm-slim as cpu
 
 WORKDIR /app
-
-# Copy the compiled binary from the builder stage
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
-
-# Expose the port the server listens on
+COPY resources ./resources
 EXPOSE 8080
+CMD ["./sbv2_onnx_server"]
 
-# Define the default command to run the server.
-# Model paths and other arguments should be provided when running the container.
+# Stage 3: CUDA-enabled final image
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 as cuda
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
+COPY resources ./resources
+EXPOSE 8080
+CMD ["./sbv2_onnx_server"]
+
+# Stage 4: ROCm-enabled final image
+FROM rocm/rocm-core:5.7.1-runtime as rocm
+
+WORKDIR /app
+# This base image is Ubuntu 22.04 based
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
+COPY resources ./resources
+EXPOSE 8080
 CMD ["./sbv2_onnx_server"]

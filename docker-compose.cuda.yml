@@ -2,17 +2,26 @@ version: '3.8'
 
 services:
   sbv2-onnx-server:
-    # This service builds the CPU-only Docker image.
-    # For GPU-accelerated builds, see docker-compose.cuda.yml
+    # This service builds the CUDA-enabled Docker image.
+    # It requires an NVIDIA GPU and the NVIDIA Container Toolkit.
     build:
       context: .
-      target: cpu
+      target: cuda
+      args:
+        CARGO_FEATURES: cuda
     ports:
       - "8080:8080"
     volumes:
       # Mount your local model directories into the container.
       - ./models:/app/models
       - ./bert:/app/bert
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     command:
       - "./sbv2_onnx_server"
       - "--model"

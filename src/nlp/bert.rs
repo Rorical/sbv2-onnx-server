@@ -5,15 +5,15 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use ndarray::{Array2, Array3, Axis, CowArray};
-use once_cell::sync::OnceCell;
 use ort::{
-    GraphOptimizationLevel, SessionBuilder, environment::Environment, session::Session,
-    tensor::OrtOwnedTensor, value::Value,
+    environment::Environment, session::Session, tensor::OrtOwnedTensor, value::Value,
+    ExecutionProvider, GraphOptimizationLevel, SessionBuilder,
 };
 use reqwest::blocking::Client;
 use tokenizers::{Encoding, Tokenizer};
+use tracing::info;
 
 const CHINESE_BERT_REPO: &str = "tsukumijima/chinese-roberta-wwm-ext-large-onnx";
 const REQUIRED_FILES: &[&str] = &[
@@ -26,25 +26,13 @@ const REQUIRED_FILES: &[&str] = &[
     "added_tokens.json",
 ];
 
-static ORT_ENV: OnceCell<Arc<Environment>> = OnceCell::new();
-
-fn ort_environment() -> Result<&'static Arc<Environment>> {
-    ORT_ENV.get_or_try_init(|| {
-        Environment::builder()
-            .with_name("sbv2-onnx")
-            .build()
-            .map(Arc::new)
-            .context("failed to create ONNX Runtime environment")
-    })
-}
-
 pub struct BertExtractor {
     session: Session,
     tokenizer: Tokenizer,
 }
 
 impl BertExtractor {
-    pub fn new(model_dir: &Path) -> Result<Self> {
+    pub fn new(env: &Arc<Environment>, model_dir: &Path) -> Result<Self> {
         ensure_bert_assets(model_dir)?;
 
         let tokenizer_path = model_dir.join("tokenizer.json");
@@ -56,12 +44,12 @@ impl BertExtractor {
         })?;
 
         let model_path = locate_model_file(model_dir)?;
-        let session = SessionBuilder::new(ort_environment()?)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_model_from_file(model_path.clone())
-            .with_context(|| {
-                format!("failed to load ONNX BERT model at {}", model_path.display())
-            })?;
+        let session = new_bert_session(env, &model_path).with_context(|| {
+            format!(
+                "failed to load ONNX BERT model at {}",
+                model_path.display()
+            )
+        })?;
 
         Ok(Self { session, tokenizer })
     }
@@ -178,6 +166,31 @@ impl BertExtractor {
         };
         Ok((features, encoding))
     }
+}
+
+fn new_bert_session(env: &Arc<Environment>, model_path: &Path) -> Result<Session> {
+    let mut session_builder = SessionBuilder::new(env)?
+        .with_optimization_level(GraphOptimizationLevel::Level3)?
+        .with_parallel_execution(true)?;
+
+    let mut providers = Vec::new();
+    #[cfg(feature = "cuda")]
+    {
+        info!("Using CUDA for BERT");
+        providers.push(ExecutionProvider::CUDA(Default::default()));
+    }
+    #[cfg(feature = "coreml")]
+    {
+        info!("Using CoreML for BERT");
+        providers.push(ExecutionProvider::CoreML(Default::default()));
+    }
+    #[cfg(feature = "rocm")]
+    {
+        info!("Using ROCm for BERT");
+        providers.push(ExecutionProvider::ROCm(Default::default()));
+    }
+    session_builder = session_builder.with_execution_providers(providers)?;
+    Ok(session_builder.with_model_from_file(model_path)?)
 }
 
 fn locate_model_file(dir: &Path) -> Result<PathBuf> {

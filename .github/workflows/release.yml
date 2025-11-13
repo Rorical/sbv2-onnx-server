@@ -13,17 +13,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset_name: sbv2-onnx-server-x86_64-linux
+            asset_name: sbv2-onnx-server-x86_64-linux-gpu
             target: x86_64-unknown-linux-gnu
             binary_name: sbv2_onnx_server
+            features: "cuda,rocm"
+          - os: ubuntu-latest
+            asset_name: sbv2-onnx-server-x86_64-linux-cpu
+            target: x86_64-unknown-linux-gnu
+            binary_name: sbv2_onnx_server
+            features: ""
           - os: macos-latest
             asset_name: sbv2-onnx-server-x86_64-macos
             target: x86_64-apple-darwin
             binary_name: sbv2_onnx_server
+            features: "coreml"
           - os: windows-latest
             asset_name: sbv2-onnx-server-x86_64-windows
             target: x86_64-pc-windows-msvc
             binary_name: sbv2_onnx_server.exe
+            features: "cuda"
 
     steps:
       - name: Checkout code
@@ -36,7 +44,12 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
+          fi
 
       - name: Archive binary
         shell: bash
@@ -47,7 +60,7 @@ jobs:
           else
             tar czvf ../../../${{ matrix.asset_name }}.tar.gz ${{ matrix.binary_name }}
           fi
-          
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -61,6 +74,18 @@ jobs:
     name: Build and push Docker image
     runs-on: ubuntu-latest
     needs: build-binaries
+    strategy:
+      matrix:
+        include:
+          - backend: cpu
+            docker_target: cpu
+            cargo_features: ""
+          - backend: cuda
+            docker_target: cuda
+            cargo_features: "cuda"
+          - backend: rocm
+            docker_target: rocm
+            cargo_features: "rocm"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -80,12 +105,18 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: |
+            suffix=-${{ matrix.backend }}
+            latest=false
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          target: ${{ matrix.docker_target }}
+          build-args: |
+            CARGO_FEATURES=${{ matrix.cargo_features }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 

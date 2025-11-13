@@ -2,15 +2,17 @@ use std::{
     collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
-use ndarray::{Array1, Array2, Array3, Axis, CowArray, arr0};
+use anyhow::{anyhow, bail, Context, Result};
+use ndarray::{arr0, Array1, Array2, Array3, Axis, CowArray};
 use ndarray_npy::ReadNpyExt;
 use ort::{
-    GraphOptimizationLevel, SessionBuilder, environment::Environment, session::Session,
-    value::Value,
+    environment::Environment, session::Session, value::Value, ExecutionProvider,
+    GraphOptimizationLevel, SessionBuilder,
 };
+use tracing::info;
 
 use crate::{
     config::HyperParameters,
@@ -136,13 +138,10 @@ impl TtsProject {
             .context("failed to initialize ONNX Runtime environment")?
             .into_arc();
 
-        let session = SessionBuilder::new(&env)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_model_from_file(model_path)
-            .context("failed to load TTS ONNX model")?;
+        let session = new_session(&env, model_path)?;
 
         let bert_dir = resolve_bert_dir(bert_root);
-        let bert = BertExtractor::new(&bert_dir)
+        let bert = BertExtractor::new(&env, &bert_dir)
             .with_context(|| format!("failed to initialize BERT at {}", bert_dir.display()))?;
 
         Ok(Self {
@@ -355,6 +354,35 @@ impl TtsProject {
         let vec = &mean + (&target - &mean) * weight;
         Ok(vec.to_owned())
     }
+}
+
+fn new_session(env: &Arc<Environment>, model_path: &Path) -> Result<Session> {
+    let mut session_builder = SessionBuilder::new(env)?
+        .with_optimization_level(GraphOptimizationLevel::Level3)?
+        .with_parallel_execution(true)?;
+
+    let mut providers = Vec::new();
+    #[cfg(feature = "cuda")]
+    {
+        info!("Using CUDA execution provider");
+        providers.push(ExecutionProvider::CUDA(Default::default()));
+    }
+    #[cfg(feature = "coreml")]
+    {
+        info!("Using CoreML execution provider");
+        providers.push(ExecutionProvider::CoreML(Default::default()));
+    }
+    #[cfg(feature = "rocm")]
+    {
+        info!("Using ROCm execution provider");
+        providers.push(ExecutionProvider::ROCm(Default::default()));
+    }
+
+    session_builder = session_builder.with_execution_providers(providers)?;
+
+    session_builder
+        .with_model_from_file(model_path)
+        .with_context(|| format!("failed to load ONNX model from {}", model_path.display()))
 }
 
 fn intersperse(values: &[i64], blank: i64) -> Vec<i64> {
