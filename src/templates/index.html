@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>Style-Bert-VITS2 ONNX TTS</title>
+    <style>
+      body { font-family: sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+      textarea { width: 100%; height: 8rem; }
+      label { display: block; margin-top: 1rem; font-weight: bold; }
+      input, select { width: 100%; padding: 0.5rem; box-sizing: border-box; }
+      button { margin-top: 1.5rem; padding: 0.75rem 1.5rem; cursor: pointer; }
+      #status { margin-top: 1rem; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>Style-Bert-VITS2 ONNX TTS</h1>
+    <form id="tts-form">
+      <label for="text">输入文本</label>
+      <textarea id="text" required>这一定是一个不同以往的浪漫故事</textarea>
+
+      <label for="voice">说话人</label>
+      <select id="voice"></select>
+
+      <label for="style">风格</label>
+      <select id="style"></select>
+
+      <label for="noise">noise</label>
+      <input id="noise" type="number" step="0.05" value="0.6" min="0" />
+
+      <label for="noise_w">noise_w</label>
+      <input id="noise_w" type="number" step="0.05" value="0.8" min="0" />
+
+      <label for="sdp_ratio">sdp_ratio</label>
+      <input id="sdp_ratio" type="number" step="0.05" value="0.2" min="0" max="1" />
+
+      <button type="submit">合成语音</button>
+    </form>
+    <div id="status"></div>
+    <audio id="player" controls style="margin-top:1.5rem; width:100%;"></audio>
+
+    <script>
+      async function loadMeta() {
+        const res = await fetch('/v1/metadata');
+        const meta = await res.json();
+        const voiceSel = document.getElementById('voice');
+        const styleSel = document.getElementById('style');
+        voiceSel.innerHTML = '';
+        styleSel.innerHTML = '';
+        meta.voices.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = v;
+          voiceSel.appendChild(opt);
+        });
+        meta.styles.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.textContent = s;
+          styleSel.appendChild(opt);
+        });
+      }
+
+      async function synthesize(event) {
+        event.preventDefault();
+        const status = document.getElementById('status');
+        const player = document.getElementById('player');
+        status.textContent = '合成中...';
+        player.src = '';
+
+        try {
+          const payload = {
+            model: 'style-bert-vits2-onnx',
+            input: document.getElementById('text').value,
+            voice: document.getElementById('voice').value || null,
+            style: document.getElementById('style').value || null,
+            noise: parseFloat(document.getElementById('noise').value),
+            noise_w: parseFloat(document.getElementById('noise_w').value),
+            sdp_ratio: parseFloat(document.getElementById('sdp_ratio').value),
+            response_format: 'b64_json',
+            audio_format: 'wav'
+          };
+          const res = await fetch('/v1/audio/speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.message || res.statusText);
+          }
+          const json = await res.json();
+          const audioData = atob(json.audio_base64);
+          const buffer = new Uint8Array(audioData.length);
+          for (let i = 0; i < audioData.length; i++) {
+            buffer[i] = audioData.charCodeAt(i);
+          }
+          const blob = new Blob([buffer], { type: 'audio/wav' });
+          player.src = URL.createObjectURL(blob);
+          await player.play();
+          status.textContent = `合成完成 (采样率 ${json.sample_rate} Hz, 时长 ${json.duration_ms} ms)`;
+        } catch (err) {
+          console.error(err);
+          status.textContent = `错误: ${err.message}`;
+        }
+      }
+
+      document.getElementById('tts-form').addEventListener('submit', synthesize);
+      loadMeta().catch(err => console.error(err));
+    </script>
+  </body>
+</html>
