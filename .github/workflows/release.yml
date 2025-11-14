@@ -44,6 +44,7 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build binary
+        shell: bash
         run: |
           if [ -z "${{ matrix.features }}" ]; then
             cargo build --release --target ${{ matrix.target }}
@@ -52,6 +53,7 @@ jobs:
           fi
 
       - name: Bundle ONNX Runtime libraries
+        shell: bash
         run: ./scripts/bundle_ort_libs.sh target/${{ matrix.target }}/release
 
       - name: Archive binary
@@ -77,9 +79,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: |
-            ${{ matrix.asset_name }}.tar.gz
-            ${{ matrix.asset_name }}.zip
+          path: ${{ matrix.os == 'windows-latest' && format('{0}.zip', matrix.asset_name) || format('{0}.tar.gz', matrix.asset_name) }}
           if-no-files-found: error
 
   build-docker:
