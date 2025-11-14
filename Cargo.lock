@@ -2032,6 +2032,7 @@ dependencies = [
  "clap",
  "hound",
  "jieba-rs",
+ "libc",
  "ndarray",
  "ndarray-npy",
  "once_cell",

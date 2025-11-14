@@ -1,9 +1,12 @@
-use std::io::Cursor;
+use std::{io::Cursor, ptr};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use hound::{SampleFormat, WavSpec, WavWriter};
+use libc::c_int;
 
 const DEFAULT_PEAK_TARGET: f32 = 0.97;
+const DEFAULT_MP3_BITRATE: c_int = 192;
+const MP3_PADDING: usize = 7200;
 
 pub fn normalize_peak(samples: &mut [f32]) {
     normalize_peak_to(samples, DEFAULT_PEAK_TARGET);
@@ -47,6 +50,132 @@ pub fn pcm_to_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
+pub fn pcm_to_mp3(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
+    let mut encoder = LameEncoder::new(sample_rate, 1)?;
+    encoder.encode(samples)
+}
+
+struct LameEncoder {
+    inner: *mut lame_global_flags,
+}
+
+impl LameEncoder {
+    fn new(sample_rate: u32, channels: c_int) -> Result<Self> {
+        unsafe {
+            let handle = lame_init();
+            if handle.is_null() {
+                bail!("failed to initialise libmp3lame encoder");
+            }
+            let mut encoder = Self { inner: handle };
+            encoder.configure(sample_rate, channels)?;
+            Ok(encoder)
+        }
+    }
+
+    fn configure(&mut self, sample_rate: u32, channels: c_int) -> Result<()> {
+        unsafe {
+            let sr = sample_rate
+                .try_into()
+                .map_err(|_| anyhow!("sample rate {sample_rate} too large"))?;
+            ensure_success(
+                lame_set_in_samplerate(self.inner, sr),
+                "lame_set_in_samplerate",
+            )?;
+            ensure_success(
+                lame_set_out_samplerate(self.inner, sr),
+                "lame_set_out_samplerate",
+            )?;
+            ensure_success(
+                lame_set_num_channels(self.inner, channels),
+                "lame_set_num_channels",
+            )?;
+            ensure_success(
+                lame_set_brate(self.inner, DEFAULT_MP3_BITRATE),
+                "lame_set_brate",
+            )?;
+            ensure_success(lame_set_quality(self.inner, 2), "lame_set_quality")?;
+            ensure_success(lame_init_params(self.inner), "lame_init_params")
+        }
+    }
+
+    fn encode(&mut self, samples: &[f32]) -> Result<Vec<u8>> {
+        let buffer_size = estimate_mp3_buffer(samples.len());
+        let mut mp3 = Vec::with_capacity(buffer_size);
+        let mut scratch = vec![0u8; buffer_size];
+
+        let sample_len: c_int = samples
+            .len()
+            .try_into()
+            .map_err(|_| anyhow!("audio buffer too large for MP3 encoder"))?;
+        let written = unsafe {
+            lame_encode_buffer_ieee_float(
+                self.inner,
+                samples.as_ptr(),
+                ptr::null(),
+                sample_len,
+                scratch.as_mut_ptr(),
+                scratch.len() as c_int,
+            )
+        };
+        ensure_success(written, "lame_encode_buffer_ieee_float")?;
+        mp3.extend_from_slice(&scratch[..written as usize]);
+
+        let flushed =
+            unsafe { lame_encode_flush(self.inner, scratch.as_mut_ptr(), scratch.len() as c_int) };
+        ensure_success(flushed, "lame_encode_flush")?;
+        mp3.extend_from_slice(&scratch[..flushed as usize]);
+        Ok(mp3)
+    }
+}
+
+impl Drop for LameEncoder {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.inner.is_null() {
+                lame_close(self.inner);
+                self.inner = ptr::null_mut();
+            }
+        }
+    }
+}
+
+fn estimate_mp3_buffer(samples: usize) -> usize {
+    (((samples as f64 * 1.25).ceil() as usize) + MP3_PADDING).max(MP3_PADDING)
+}
+
+fn ensure_success(code: c_int, func: &str) -> Result<()> {
+    if code < 0 {
+        bail!("{func} failed with code {code}");
+    }
+    Ok(())
+}
+
+#[repr(C)]
+struct lame_global_flags {
+    _private: [u8; 0],
+}
+
+#[link(name = "mp3lame")]
+unsafe extern "C" {
+    fn lame_init() -> *mut lame_global_flags;
+    fn lame_close(gfp: *mut lame_global_flags) -> c_int;
+    fn lame_set_in_samplerate(gfp: *mut lame_global_flags, value: c_int) -> c_int;
+    fn lame_set_out_samplerate(gfp: *mut lame_global_flags, value: c_int) -> c_int;
+    fn lame_set_num_channels(gfp: *mut lame_global_flags, value: c_int) -> c_int;
+    fn lame_set_brate(gfp: *mut lame_global_flags, value: c_int) -> c_int;
+    fn lame_set_quality(gfp: *mut lame_global_flags, value: c_int) -> c_int;
+    fn lame_init_params(gfp: *mut lame_global_flags) -> c_int;
+    fn lame_encode_buffer_ieee_float(
+        gfp: *mut lame_global_flags,
+        pcm_l: *const f32,
+        pcm_r: *const f32,
+        nsamples: c_int,
+        mp3buf: *mut u8,
+        mp3buf_size: c_int,
+    ) -> c_int;
+    fn lame_encode_flush(gfp: *mut lame_global_flags, mp3buf: *mut u8, size: c_int) -> c_int;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +200,21 @@ mod tests {
             .collect();
         assert_eq!(decoded.len(), samples.len());
         assert_eq!(reader.spec().sample_rate, 22050);
+    }
+
+    #[test]
+    fn pcm_to_mp3_produces_bytes() {
+        let samples = vec![0.0_f32; 22050];
+        let mp3 = pcm_to_mp3(&samples, 22050).expect("mp3 encoding");
+        let frame_sync = mp3
+            .get(0)
+            .copied()
+            .zip(mp3.get(1).copied())
+            .map(|(b0, b1)| b0 == 0xFF && (b1 & 0xE0) == 0xE0)
+            .unwrap_or(false);
+        assert!(
+            mp3.starts_with(b"ID3") || frame_sync,
+            "mp3 header not detected"
+        );
     }
 }

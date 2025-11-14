@@ -10,6 +10,7 @@ This project provides a Rust-based server for models trained with or converted b
 -   **ONNX Runtime**: Utilizes the ONNX runtime for efficient, cross-platform model inference.
 -   **OpenAI-Compatible API**: Implements an API that mirrors OpenAI's audio generation endpoints for seamless integration with existing clients and tools.
 -   **Dedicated Chinese NLP Pipeline**: Includes a sophisticated pre-processing pipeline tailored for Chinese text.
+-   **Flexible Audio Output**: Return audio as WAV or MP3 by toggling the `audio_format` request parameter.
 
 ## Hardware Acceleration
 
@@ -57,6 +58,7 @@ To run the server, you must provide paths to a `Style-Bert-VITS2` model (in ONNX
 -   The corresponding `config.json` file for your model.
 -   The `style_vectors.npy` file.
 -   The `chinese-roberta-wwm-ext-large-onnx` BERT model files.
+-   (Optional for MP3 output) [LAME](https://lame.sourceforge.io/) installed on the host so `libmp3lame` is available (`brew install lame` on macOS, `apt install libmp3lame-dev` on Debian/Ubuntu).
 
 ### Usage
 

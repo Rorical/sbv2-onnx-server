@@ -8,11 +8,13 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::{
+    audio,
     inference::{ChineseSynthesisInput, ChineseSynthesizer},
     model::TtsProject,
 };
@@ -58,6 +60,16 @@ struct SpeechRequest {
 enum AudioFormat {
     #[default]
     Wav,
+    Mp3,
+}
+
+impl AudioFormat {
+    fn as_str(&self) -> &'static str {
+        match self {
+            AudioFormat::Wav => "wav",
+            AudioFormat::Mp3 => "mp3",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -154,9 +166,6 @@ async fn create_speech(
     } = payload;
 
     let format = audio_format.unwrap_or_default();
-    if !matches!(format, AudioFormat::Wav) {
-        return Err(ApiError::bad_request("only WAV audio_format is supported"));
-    }
 
     let response_format = response_format.unwrap_or_default();
     if !matches!(response_format, ResponseFormat::B64Json) {
@@ -212,12 +221,22 @@ async fn create_speech(
             .map(str::to_string)
     });
 
+    let encode_result = match format {
+        AudioFormat::Wav => Ok(result.wav_base64()),
+        AudioFormat::Mp3 => audio::pcm_to_mp3(&result.pcm, result.sample_rate)
+            .map(|bytes| BASE64_STANDARD.encode(bytes))
+            .map_err(|err| {
+                tracing::error!("MP3 encoding failed: {err:?}");
+                ApiError::internal(format!("failed to encode MP3: {err}"))
+            }),
+    }?;
+
     let response = SpeechResponse {
         model,
         voice: resolved_voice,
         style: resolved_style,
-        audio_base64: result.wav_base64(),
-        audio_format: "wav",
+        audio_base64: encode_result,
+        audio_format: format.as_str(),
         sample_rate: result.sample_rate,
         duration_ms: result.timings.total_ms,
     };
