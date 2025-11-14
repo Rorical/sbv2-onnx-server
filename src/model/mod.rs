@@ -5,13 +5,14 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
-use ndarray::{arr0, Array1, Array2, Array3, Axis, CowArray};
+use anyhow::{Context, Result, anyhow, bail};
+use ndarray::{Array1, Array2, Array3, Axis, CowArray, arr0};
 use ndarray_npy::ReadNpyExt;
 use ort::{
-    environment::Environment, session::Session, value::Value, ExecutionProvider,
-    GraphOptimizationLevel, SessionBuilder,
+    ExecutionProvider, GraphOptimizationLevel, SessionBuilder, environment::Environment,
+    session::Session, value::Value,
 };
+#[cfg(any(feature = "cuda", feature = "coreml", feature = "rocm"))]
 use tracing::info;
 
 use crate::{
@@ -361,7 +362,10 @@ fn new_session(env: &Arc<Environment>, model_path: &Path) -> Result<Session> {
         .with_optimization_level(GraphOptimizationLevel::Level3)?
         .with_parallel_execution(true)?;
 
-    let mut providers = Vec::new();
+    #[cfg(any(feature = "cuda", feature = "coreml", feature = "rocm"))]
+    let mut providers: Vec<ExecutionProvider> = Vec::new();
+    #[cfg(not(any(feature = "cuda", feature = "coreml", feature = "rocm")))]
+    let providers: Vec<ExecutionProvider> = Vec::new();
     #[cfg(feature = "cuda")]
     {
         info!("Using CUDA execution provider");

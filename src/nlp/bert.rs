@@ -1,18 +1,20 @@
 use std::{
+    collections::{HashMap, VecDeque},
     fs::{self, File},
     io::copy,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
-use ndarray::{Array2, Array3, Axis, CowArray};
+use anyhow::{Context, Result, anyhow, bail};
+use ndarray::{Array1, Array2, Array3, Axis, CowArray};
 use ort::{
-    environment::Environment, session::Session, tensor::OrtOwnedTensor, value::Value,
-    ExecutionProvider, GraphOptimizationLevel, SessionBuilder,
+    ExecutionProvider, GraphOptimizationLevel, SessionBuilder, environment::Environment,
+    session::Session, tensor::OrtOwnedTensor, value::Value,
 };
 use reqwest::blocking::Client;
 use tokenizers::{Encoding, Tokenizer};
+#[cfg(any(feature = "cuda", feature = "coreml", feature = "rocm"))]
 use tracing::info;
 
 const CHINESE_BERT_REPO: &str = "tsukumijima/chinese-roberta-wwm-ext-large-onnx";
@@ -25,10 +27,12 @@ const REQUIRED_FILES: &[&str] = &[
     "special_tokens_map.json",
     "added_tokens.json",
 ];
+const ASSIST_CACHE_CAPACITY: usize = 8;
 
 pub struct BertExtractor {
     session: Session,
     tokenizer: Tokenizer,
+    assist_cache: Mutex<AssistCache>,
 }
 
 impl BertExtractor {
@@ -45,13 +49,14 @@ impl BertExtractor {
 
         let model_path = locate_model_file(model_dir)?;
         let session = new_bert_session(env, &model_path).with_context(|| {
-            format!(
-                "failed to load ONNX BERT model at {}",
-                model_path.display()
-            )
+            format!("failed to load ONNX BERT model at {}", model_path.display())
         })?;
 
-        Ok(Self { session, tokenizer })
+        Ok(Self {
+            session,
+            tokenizer,
+            assist_cache: Mutex::new(AssistCache::new(ASSIST_CACHE_CAPACITY)),
+        })
     }
 
     pub fn extract(
@@ -71,14 +76,17 @@ impl BertExtractor {
             );
         }
 
-        let style_mean = if let Some((assist, weight)) = assist_text {
-            let (assist_features, _) = self.forward(assist)?;
-            let mean = assist_features
-                .mean_axis(Axis(0))
-                .context("empty assist feature")?;
-            Some((mean, weight))
-        } else {
-            None
+        let style_mean = match assist_text {
+            Some((assist, weight)) if weight > 0.0 => {
+                let trimmed = assist.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    let mean = self.cached_style_mean(trimmed)?;
+                    Some((mean, weight))
+                }
+            }
+            _ => None,
         };
 
         let hidden = features.shape()[1];
@@ -89,17 +97,46 @@ impl BertExtractor {
         for (idx, &repeat) in aligned_word2ph.iter().enumerate() {
             let mut base = features.row(idx).to_owned();
             if let Some((ref mean, weight)) = style_mean {
-                base = &base * (1.0 - weight) + mean * weight;
+                let blend = 1.0 - weight;
+                for (dst, &m) in base.iter_mut().zip(mean.iter()) {
+                    *dst = *dst * blend + m * weight;
+                }
             }
             for _ in 0..repeat {
-                for (h, value) in base.iter().enumerate() {
-                    result[[h, frame_index]] = *value;
-                }
+                result.column_mut(frame_index).assign(&base);
                 frame_index += 1;
             }
         }
 
         Ok(result)
+    }
+
+    fn cached_style_mean(&self, text: &str) -> Result<Arc<Array1<f32>>> {
+        {
+            let mut cache = self
+                .assist_cache
+                .lock()
+                .expect("assist cache mutex poisoned");
+            if let Some(mean) = cache.get(text) {
+                return Ok(mean);
+            }
+        }
+
+        let (features, _) = self.forward(text)?;
+        let mean = features
+            .mean_axis(Axis(0))
+            .context("empty assist feature")?;
+        let mean = Arc::new(mean);
+
+        let mut cache = self
+            .assist_cache
+            .lock()
+            .expect("assist cache mutex poisoned");
+        if let Some(existing) = cache.get(text) {
+            return Ok(existing);
+        }
+        cache.insert(text.to_string(), mean.clone());
+        Ok(mean)
     }
 
     fn forward(&self, text: &str) -> Result<(Array2<f32>, Encoding)> {
@@ -173,7 +210,10 @@ fn new_bert_session(env: &Arc<Environment>, model_path: &Path) -> Result<Session
         .with_optimization_level(GraphOptimizationLevel::Level3)?
         .with_parallel_execution(true)?;
 
-    let mut providers = Vec::new();
+    #[cfg(any(feature = "cuda", feature = "coreml", feature = "rocm"))]
+    let mut providers: Vec<ExecutionProvider> = Vec::new();
+    #[cfg(not(any(feature = "cuda", feature = "coreml", feature = "rocm")))]
+    let providers: Vec<ExecutionProvider> = Vec::new();
     #[cfg(feature = "cuda")]
     {
         info!("Using CUDA for BERT");
@@ -247,6 +287,51 @@ fn ensure_bert_assets(model_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+struct AssistCache {
+    entries: HashMap<String, Arc<Array1<f32>>>,
+    order: VecDeque<String>,
+    capacity: usize,
+}
+
+impl AssistCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Arc<Array1<f32>>> {
+        let value = self.entries.get(key).cloned();
+        if value.is_some() {
+            self.touch(key);
+        }
+        value
+    }
+
+    fn insert(&mut self, key: String, value: Arc<Array1<f32>>) {
+        self.entries.insert(key.clone(), value);
+        self.touch(&key);
+        self.evict();
+    }
+
+    fn touch(&mut self, key: &str) {
+        self.order.retain(|existing| existing != key);
+        self.order.push_back(key.to_string());
+    }
+
+    fn evict(&mut self) {
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 fn align_word2ph(text: &str, word2ph: &[usize], encoding: &Encoding) -> Result<Vec<usize>> {
     if word2ph.is_empty() {
         bail!("word2ph is empty");
@@ -310,4 +395,28 @@ fn align_word2ph(text: &str, word2ph: &[usize], encoding: &Encoding) -> Result<V
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array1;
+    use std::sync::Arc;
+
+    #[test]
+    fn assist_cache_drops_least_recent_entry() {
+        let mut cache = AssistCache::new(2);
+        let first = Arc::new(Array1::from_vec(vec![0.0]));
+        let second = Arc::new(Array1::from_vec(vec![1.0]));
+        let third = Arc::new(Array1::from_vec(vec![2.0]));
+
+        cache.insert("first".into(), first);
+        cache.insert("second".into(), second);
+        cache.get("first");
+        cache.insert("third".into(), third);
+
+        assert!(cache.entries.contains_key("first"));
+        assert!(cache.entries.contains_key("third"));
+        assert!(!cache.entries.contains_key("second"));
+    }
 }

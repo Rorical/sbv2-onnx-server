@@ -25,7 +25,8 @@ pub fn normalize_peak_to(samples: &mut [f32], target: f32) {
 }
 
 pub fn pcm_to_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
-    let mut cursor = Cursor::new(Vec::new());
+    let payload_bytes = samples.len().saturating_mul(2);
+    let mut cursor = Cursor::new(Vec::with_capacity(payload_bytes.saturating_add(128)));
     {
         let spec = WavSpec {
             channels: 1,
