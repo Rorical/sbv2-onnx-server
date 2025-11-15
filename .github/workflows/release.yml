@@ -27,11 +27,6 @@ jobs:
             target: x86_64-apple-darwin
             binary_name: sbv2_onnx_server
             features: "coreml"
-          - os: windows-latest
-            asset_name: sbv2-onnx-server-x86_64-windows
-            target: x86_64-pc-windows-msvc
-            binary_name: sbv2_onnx_server.exe
-            features: "cuda"
 
     steps:
       - name: Checkout code
@@ -52,25 +47,6 @@ jobs:
       - name: Install MP3 dependency (macOS)
         if: runner.os == 'macOS'
         run: brew install lame
-
-      - name: Install MP3 dependency (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install lame -y
-          $toolsDir = "C:\ProgramData\chocolatey\lib\lame\tools"
-          if (-not (Test-Path $toolsDir)) {
-            throw "Unable to locate Chocolatey lame tools directory at $toolsDir"
-          }
-          $arch = "libmp3lame-win64"
-          if ("${{ matrix.target }}" -like "*i686*") {
-            $arch = "libmp3lame-win32"
-          }
-          $libPath = Join-Path $toolsDir $arch
-          if (-not (Test-Path $libPath)) {
-            throw "Unable to locate mp3lame library path at $libPath"
-          }
-          "LIBMP3LAME_DIR=$libPath" >> $env:GITHUB_ENV
 
       - name: Build binary
         shell: bash
@@ -98,17 +74,13 @@ jobs:
               files+=("${matches[@]}")
             fi
           done
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../${{ matrix.asset_name }}.zip "${files[@]}"
-          else
-            tar czvf ../../../${{ matrix.asset_name }}.tar.gz "${files[@]}"
-          fi
+          tar czvf ../../../${{ matrix.asset_name }}.tar.gz "${files[@]}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: ${{ matrix.os == 'windows-latest' && format('{0}.zip', matrix.asset_name) || format('{0}.tar.gz', matrix.asset_name) }}
+          path: ${{ format('{0}.tar.gz', matrix.asset_name) }}
           if-no-files-found: error
 
   build-docker:
