@@ -58,12 +58,15 @@ jobs:
         shell: pwsh
         run: |
           choco install lame -y
-          $toolsDir = Get-ChildItem -Directory "C:\ProgramData\chocolatey\lib\lame\tools" | Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $toolsDir) {
-            throw "Unable to locate Chocolatey lame tools directory"
+          $toolsDir = "C:\ProgramData\chocolatey\lib\lame\tools"
+          if (-not (Test-Path $toolsDir)) {
+            throw "Unable to locate Chocolatey lame tools directory at $toolsDir"
           }
-          $arch = if ($env:VSCMD_ARG_TGT_ARCH -eq "x86") { "libmp3lame-win32" } else { "libmp3lame-win64" }
-          $libPath = Join-Path $toolsDir.FullName $arch
+          $arch = "libmp3lame-win64"
+          if ("${{ matrix.target }}" -like "*i686*") {
+            $arch = "libmp3lame-win32"
+          }
+          $libPath = Join-Path $toolsDir $arch
           if (-not (Test-Path $libPath)) {
             throw "Unable to locate mp3lame library path at $libPath"
           }
