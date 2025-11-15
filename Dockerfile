@@ -7,7 +7,12 @@ ARG CARGO_FEATURES=""
 WORKDIR /usr/src/app
 
 RUN apt-get update && apt-get install -y protobuf-compiler libmp3lame-dev pkg-config && rm -rf /var/lib/apt/lists/*
-COPY . .
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY resources ./resources
+COPY scripts ./scripts
+COPY build.rs .
 
 # Build with specified features. If CARGO_FEATURES is empty, this uses the default.
 RUN cargo build --release --features "$CARGO_FEATURES" \
