@@ -64,9 +64,11 @@ jobs:
           shopt -s nullglob
           files=("${{ matrix.binary_name }}")
           for pattern in libonnxruntime* onnxruntime.dll; do
-            matches=($pattern)
-            if [ ${#matches[@]} -gt 0 ]; then
-              files+=("${matches[@]}")
+            if compgen -G "$pattern" > /dev/null; then
+              matches=($pattern)
+              if [ ${#matches[@]} -gt 0 ]; then
+                files+=("${matches[@]}")
+              fi
             fi
           done
           tar czvf ../../../${{ matrix.asset_name }}.tar.gz "${files[@]}"
