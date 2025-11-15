@@ -1,5 +1,5 @@
 # Stage 1: Common builder
-FROM rust:1-bookworm as builder
+FROM rust:1-bookworm AS builder
 
 # Build argument to control features, e.g., "cuda" or "rocm"
 ARG CARGO_FEATURES=""
@@ -16,7 +16,7 @@ RUN cargo build --release --features "$CARGO_FEATURES" \
 # --- Final Images ---
 
 # Stage 2: CPU-only final image
-FROM debian:bookworm-slim as cpu
+FROM debian:bookworm-slim AS cpu
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libmp3lame0 && rm -rf /var/lib/apt/lists/*
@@ -27,7 +27,7 @@ EXPOSE 8080
 CMD ["./sbv2_onnx_server"]
 
 # Stage 3: CUDA-enabled final image
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 as cuda
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS cuda
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libmp3lame0 && rm -rf /var/lib/apt/lists/*
@@ -38,7 +38,7 @@ EXPOSE 8080
 CMD ["./sbv2_onnx_server"]
 
 # Stage 4: ROCm-enabled final image
-FROM rocm/rocm-core:5.7.1-runtime as rocm
+FROM rocm/dev-ubuntu-22.04:5.7-complete AS rocm
 
 WORKDIR /app
 # This base image is Ubuntu 22.04 based
