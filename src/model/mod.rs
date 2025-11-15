@@ -14,6 +14,7 @@ use ort::{
 };
 #[cfg(any(feature = "cuda", feature = "coreml", feature = "rocm"))]
 use tracing::info;
+use tracing::warn;
 
 use crate::{
     config::HyperParameters,
@@ -169,19 +170,8 @@ impl TtsProject {
             .get("ZH")
             .ok_or_else(|| anyhow!("tone start for ZH not found"))? as i32;
 
-        let mut phone_ids = Vec::with_capacity(phones.len());
-        for phone in &phones {
-            let id = SYMBOL_ID_MAP
-                .get(phone.as_str())
-                .copied()
-                .ok_or_else(|| anyhow!("unknown phone symbol '{phone}'"))?;
-            phone_ids.push(id as i64);
-        }
-
-        let mut tone_ids: Vec<i64> = tones
-            .iter()
-            .map(|&tone| (tone_start + tone) as i64)
-            .collect();
+        let (mut phone_ids, mut tone_ids) =
+            self.encode_phone_sequence(&phones, &tones, tone_start, &mut word2ph)?;
         let mut lang_ids = vec![language_id; phone_ids.len()];
 
         if self.hps.data.add_blank {
@@ -354,6 +344,52 @@ impl TtsProject {
         let target = self.style_vectors.row(style_id);
         let vec = &mean + (&target - &mean) * weight;
         Ok(vec.to_owned())
+    }
+
+    fn encode_phone_sequence(
+        &self,
+        phones: &[String],
+        tones: &[i32],
+        tone_start: i32,
+        word2ph: &mut [usize],
+    ) -> Result<(Vec<i64>, Vec<i64>)> {
+        if phones.len() != tones.len() {
+            bail!(
+                "phones/tones length mismatch: {} vs {}",
+                phones.len(),
+                tones.len()
+            );
+        }
+
+        let mut phone_ids = Vec::with_capacity(phones.len());
+        let mut tone_ids = Vec::with_capacity(phones.len());
+        let mut phone_idx = 0usize;
+
+        for count in word2ph.iter_mut() {
+            let mut kept = 0usize;
+            for _ in 0..*count {
+                if phone_idx >= phones.len() {
+                    bail!("word2ph sum exceeds phone sequence length");
+                }
+                let phone = &phones[phone_idx];
+                let tone = tones[phone_idx];
+                phone_idx += 1;
+                if let Some(&symbol_id) = SYMBOL_ID_MAP.get(phone.as_str()) {
+                    phone_ids.push(symbol_id as i64);
+                    tone_ids.push((tone_start + tone) as i64);
+                    kept += 1;
+                } else {
+                    warn!("skipping unknown phone symbol '{phone}'");
+                }
+            }
+            *count = kept;
+        }
+
+        if phone_ids.is_empty() {
+            bail!("no recognizable phone symbols after filtering");
+        }
+
+        Ok((phone_ids, tone_ids))
     }
 }
 
