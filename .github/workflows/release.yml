@@ -43,6 +43,32 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
+      - name: Install MP3 dependency (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmp3lame-dev
+
+      - name: Install MP3 dependency (macOS)
+        if: runner.os == 'macOS'
+        run: brew install lame
+
+      - name: Install MP3 dependency (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install lame -y
+          $toolsDir = Get-ChildItem -Directory "C:\ProgramData\chocolatey\lib\lame\tools" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $toolsDir) {
+            throw "Unable to locate Chocolatey lame tools directory"
+          }
+          $arch = if ($env:VSCMD_ARG_TGT_ARCH -eq "x86") { "libmp3lame-win32" } else { "libmp3lame-win64" }
+          $libPath = Join-Path $toolsDir.FullName $arch
+          if (-not (Test-Path $libPath)) {
+            throw "Unable to locate mp3lame library path at $libPath"
+          }
+          "LIBMP3LAME_DIR=$libPath" >> $env:GITHUB_ENV
+
       - name: Build binary
         shell: bash
         run: |

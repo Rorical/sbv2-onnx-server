@@ -1,11 +1,16 @@
-use std::{io::Cursor, ptr};
+use std::io::Cursor;
+#[cfg(feature = "mp3")]
+use std::ptr;
 
 use anyhow::{Context, Result, anyhow, bail};
 use hound::{SampleFormat, WavSpec, WavWriter};
+#[cfg(feature = "mp3")]
 use libc::c_int;
 
 const DEFAULT_PEAK_TARGET: f32 = 0.97;
+#[cfg(feature = "mp3")]
 const DEFAULT_MP3_BITRATE: c_int = 192;
+#[cfg(feature = "mp3")]
 const MP3_PADDING: usize = 7200;
 
 pub fn normalize_peak(samples: &mut [f32]) {
@@ -50,15 +55,23 @@ pub fn pcm_to_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
+#[cfg(feature = "mp3")]
 pub fn pcm_to_mp3(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
     let mut encoder = LameEncoder::new(sample_rate, 1)?;
     encoder.encode(samples)
 }
 
+#[cfg(not(feature = "mp3"))]
+pub fn pcm_to_mp3(_samples: &[f32], _sample_rate: u32) -> Result<Vec<u8>> {
+    bail!("MP3 output is disabled (rebuild with `--features mp3` and install libmp3lame)");
+}
+
+#[cfg(feature = "mp3")]
 struct LameEncoder {
     inner: *mut lame_global_flags,
 }
 
+#[cfg(feature = "mp3")]
 impl LameEncoder {
     fn new(sample_rate: u32, channels: c_int) -> Result<Self> {
         unsafe {
@@ -128,6 +141,7 @@ impl LameEncoder {
     }
 }
 
+#[cfg(feature = "mp3")]
 impl Drop for LameEncoder {
     fn drop(&mut self) {
         unsafe {
@@ -139,10 +153,12 @@ impl Drop for LameEncoder {
     }
 }
 
+#[cfg(feature = "mp3")]
 fn estimate_mp3_buffer(samples: usize) -> usize {
     (((samples as f64 * 1.25).ceil() as usize) + MP3_PADDING).max(MP3_PADDING)
 }
 
+#[cfg(feature = "mp3")]
 fn ensure_success(code: c_int, func: &str) -> Result<()> {
     if code < 0 {
         bail!("{func} failed with code {code}");
@@ -150,11 +166,13 @@ fn ensure_success(code: c_int, func: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "mp3")]
 #[repr(C)]
 struct lame_global_flags {
     _private: [u8; 0],
 }
 
+#[cfg(feature = "mp3")]
 #[link(name = "mp3lame")]
 unsafe extern "C" {
     fn lame_init() -> *mut lame_global_flags;
@@ -202,6 +220,7 @@ mod tests {
         assert_eq!(reader.spec().sample_rate, 22050);
     }
 
+    #[cfg(feature = "mp3")]
     #[test]
     fn pcm_to_mp3_produces_bytes() {
         let samples = vec![0.0_f32; 22050];

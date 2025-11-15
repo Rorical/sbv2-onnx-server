@@ -58,7 +58,7 @@ To run the server, you must provide paths to a `Style-Bert-VITS2` model (in ONNX
 -   The corresponding `config.json` file for your model.
 -   The `style_vectors.npy` file.
 -   The `chinese-roberta-wwm-ext-large-onnx` BERT model files.
--   (Optional for MP3 output) [LAME](https://lame.sourceforge.io/) installed on the host so `libmp3lame` is available (`brew install lame` on macOS, `apt install libmp3lame-dev` on Debian/Ubuntu).
+-   (Optional for MP3 output) [LAME](https://lame.sourceforge.io/) installed on the host so `libmp3lame` is available (`brew install lame` on macOS, `apt install libmp3lame-dev` on Debian/Ubuntu), and build the server with `--features mp3`.
 
 ### Usage
 

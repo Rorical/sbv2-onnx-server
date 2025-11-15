@@ -6,7 +6,7 @@ ARG CARGO_FEATURES=""
 
 WORKDIR /usr/src/app
 
-RUN apt-get update && apt-get install -y protobuf-compiler
+RUN apt-get update && apt-get install -y protobuf-compiler libmp3lame-dev pkg-config && rm -rf /var/lib/apt/lists/*
 COPY . .
 
 # Build with specified features. If CARGO_FEATURES is empty, this uses the default.
@@ -19,7 +19,7 @@ RUN cargo build --release --features "$CARGO_FEATURES" \
 FROM debian:bookworm-slim as cpu
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libmp3lame0 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
 COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources
@@ -30,7 +30,7 @@ CMD ["./sbv2_onnx_server"]
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 as cuda
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libmp3lame0 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
 COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources
@@ -42,7 +42,7 @@ FROM rocm/rocm-core:5.7.1-runtime as rocm
 
 WORKDIR /app
 # This base image is Ubuntu 22.04 based
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libmp3lame0 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/sbv2_onnx_server .
 COPY --from=builder /usr/src/app/target/release/libonnxruntime* .
 COPY resources ./resources

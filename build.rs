@@ -11,6 +11,11 @@ const DEFAULT_SEARCH_PATHS: &[&str] = &[
 ];
 
 fn main() {
+    #[cfg(not(feature = "mp3"))]
+    {
+        println!("cargo:warning=mp3 feature disabled; MP3 output unavailable");
+        return;
+    }
     println!("cargo:rerun-if-env-changed=LIBMP3LAME_DIR");
     if let Some(dir) = env::var_os("LIBMP3LAME_DIR") {
         println!("cargo:rustc-link-search=native={}", dir.to_string_lossy());

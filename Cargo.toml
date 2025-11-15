@@ -31,6 +31,8 @@ uuid = "1.18.1"
 libc = "0.2"
 
 [features]
+default = ["mp3"]
 cuda = ["ort/cuda"]
 coreml = ["ort/coreml"]
 rocm = ["ort/rocm"]
+mp3 = []
