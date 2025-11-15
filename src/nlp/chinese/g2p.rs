@@ -40,11 +40,14 @@ pub fn g2p(text: &str) -> Result<(Vec<String>, Vec<i32>, Vec<usize>)> {
     let mut word2ph = Vec::new();
 
     for sentence in split_sentences(text) {
-        if sentence.trim().is_empty() {
+        let trimmed = sentence.trim();
+        if trimmed.is_empty() {
             continue;
         }
+        // Preserve leading/trailing whitespace when processing so word2ph indices
+        // continue to line up with the original text.
         let (seg_phones, seg_tones, seg_word2ph) =
-            process_sentence(sentence.trim(), tone_modifier)?;
+            process_sentence(&sentence, tone_modifier)?;
         phones.extend(seg_phones);
         tones.extend(seg_tones);
         word2ph.extend(seg_word2ph);
@@ -427,5 +430,58 @@ mod tests {
         assert_eq!(word2ph.len(), normalized.chars().count() + 2);
         assert_eq!(phones.len(), sum);
         assert!(phones.len() > 0);
+    }
+
+    #[test]
+    fn g2p_preserves_whitespace_around_tilde() {
+        let text = "Hello ~ 世界";
+        let normalized = crate::nlp::chinese::normalizer::normalize_text(text);
+        assert!(
+            normalized.contains('-'),
+            "normalizer should convert '~' into '-'"
+        );
+        let (_phones, _tones, word2ph) = g2p(&normalized).expect("g2p succeeds");
+        assert_eq!(word2ph.len(), normalized.chars().count() + 2);
+        for (idx, ch) in normalized.chars().enumerate() {
+            if ch.is_ascii_whitespace() {
+                assert_eq!(
+                    word2ph[idx + 1],
+                    0,
+                    "expected whitespace at char index {idx}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn g2p_long_romantic_phrase() {
+        let text = "嗨！是命运的邂逅吗，还是……久别重逢呢？ 真让人心跳加速呀！那么，就像初遇时那样，再一次呼唤我『昔涟』，好吗？ 我是昔涟，很高兴见到你，我的伙伴！";
+        let normalized = crate::nlp::chinese::normalizer::normalize_text(text);
+        let (phones, tones, word2ph) = g2p(&normalized).expect("g2p succeeds");
+        println!("Normalized text: {normalized}");
+        println!("Phones: {phones:?}");
+        println!("Tones: {tones:?}");
+        println!("word2ph: {word2ph:?}");
+        assert_eq!(
+            word2ph.len(),
+            normalized.chars().count() + 2,
+            "word2ph should align to normalized text"
+        );
+        assert_eq!(phones.len(), tones.len(), "phones/tones length mismatch");
+        assert_eq!(
+            phones.len(),
+            word2ph.iter().sum::<usize>(),
+            "word2ph count should equal phones"
+        );
+        // 嗨 -> h + ai; ensure those phones exist to confirm the first word was processed.
+        assert!(
+            phones.windows(2).any(|w| w[0] == "h" && w[1] == "ai"),
+            "expected to find phones for '嗨'"
+        );
+        // 昔 -> x + i, 涟 -> l + ian; ensure Sino-specific phones present.
+        assert!(
+            phones.contains(&"x".to_string()) && phones.contains(&"ian".to_string()),
+            "expected Style-Bert phones for '昔涟'"
+        );
     }
 }
